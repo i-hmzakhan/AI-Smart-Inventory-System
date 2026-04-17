@@ -2,10 +2,12 @@ import json
 import cv2
 from ultralytics import YOLO
 
+#Just trying to commit a change.
+
 def run_detection():
     # 1. Load the pre-trained YOLOv8 model
     # 'yolov8n.pt' is the lightweight version, perfect for real-time testing
-    model = YOLO('yolov8n.pt') 
+    model = YOLO('ai_model/yolov8n.pt') 
 
     # 2. Initialize the Camera (External Ingress)
     cap = cv2.VideoCapture(0)
