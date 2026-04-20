@@ -3,7 +3,6 @@ from ultralytics import YOLO
 import requests
 import json
 
-
 def run_inventory_scan(image_path):
     # 1. Load your custom weights
     model = YOLO('ai_model/best.pt')
