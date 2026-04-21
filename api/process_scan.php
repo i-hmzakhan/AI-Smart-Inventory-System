@@ -102,10 +102,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['malware_sample'])) {
 
             } catch (Exception $e) {
                 $pdo->rollBack();
-                die("❌ Database Error: " . $e->getMessage());
+                die("Database Error: " . $e->getMessage());
             }
         } else {
-            die("❌ AI Engine Error: " . htmlspecialchars($output));
+            die("AI Engine Error: " . htmlspecialchars($output));
         }
     }
 }
