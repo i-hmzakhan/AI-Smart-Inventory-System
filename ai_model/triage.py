@@ -10,19 +10,25 @@ warnings.filterwarnings("ignore", category=UserWarning, module='pefile')
 import hashlib
 import json
 import requests
+import sys
+
+# To ensure a clean console output when running the script, we can suppress TensorFlow and Scikit-Learn warnings/logs.
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # Silences library logs
+import warnings
+warnings.filterwarnings("ignore") # Silences Scikit-Learn version warnings
 
 # 1. SETUP: Load the V3 Files
-
-MODEL_PATH = 'ai_model/malware_model_v3.pkl'
-SCALER_PATH = 'ai_model/scaler_v3.pkl'
-FILE_TO_TEST = 'ai_model/microsoft-office-2021-16-0-19725-20152.exe'
+MODEL_PATH = "E:/Sem-03/Database Labs/Project/ai_model/malware_model_v3.pkl"
+SCALER_PATH = 'E:/Sem-03/Database Labs/Project/ai_model/scaler_v3.pkl'
+FILE_TO_TEST = 'E:/Sem-03/Database Labs/Project/ai_model/microsoft-office-2021-16-0-19725-20152.exe'
 
 try:
     model = joblib.load(MODEL_PATH)
     scaler = joblib.load(SCALER_PATH)
-    print("✅ V3 Model and Scaler loaded successfully.")
+    #print("V3 Model and Scaler loaded successfully.")
 except Exception as e:
-    print(f"❌ Error loading files: {e}")
+    print(f"Error loading files: {e}")
 
 # 2. FEATURE EXTRACTION: The 33-Feature Engine
 def calculate_entropy(data):
@@ -54,9 +60,26 @@ def extract_33_features(path):
         f[6] = float(pe.OPTIONAL_HEADER.SizeOfImage)
 
         # 7-13: Directory Flags
+        # 7-13: Directory Flags
         f[7] = 1.0 if hasattr(pe, 'DIRECTORY_ENTRY_DEBUG') else 0.0
-        f[8] = float(len(pe.DIRECTORY_ENTRY_EXPORT)) if hasattr(pe, 'DIRECTORY_ENTRY_EXPORT') else 0.0
-        f[9] = float(len(pe.DIRECTORY_ENTRY_IMPORT)) if hasattr(pe, 'DIRECTORY_ENTRY_IMPORT') else 0.0
+
+        # FIX FOR EXPORTS:
+        if hasattr(pe, 'DIRECTORY_ENTRY_EXPORT'):
+            try:
+                f[8] = float(len(pe.DIRECTORY_ENTRY_EXPORT.symbols))
+            except (AttributeError, TypeError):
+                f[8] = 0.0
+        else:
+            f[8] = 0.0
+
+        # FIX FOR IMPORTS:
+        if hasattr(pe, 'DIRECTORY_ENTRY_IMPORT'):
+            try:
+                f[9] = float(len(pe.DIRECTORY_ENTRY_IMPORT))
+            except (AttributeError, TypeError):
+                f[9] = 0.0
+        else:
+            f[9] = 0.0
         f[10] = 1.0 if pe.FILE_HEADER.Characteristics & 0x0001 else 0.0
         f[11] = 1.0 if hasattr(pe, 'DIRECTORY_ENTRY_RESOURCE') else 0.0
         f[12] = 1.0 if hasattr(pe, 'DIRECTORY_ENTRY_SECURITY') else 0.0
@@ -113,7 +136,7 @@ def extract_33_features(path):
 
         return np.array(f).reshape(1, -1)
     except Exception as e:
-        print(f"❌ Extraction Error: {e}")
+        print(f"Extraction Error: {e}")
         return None
 
 # 3. PREDICTION: Run the Data through V3
@@ -134,7 +157,7 @@ raw_vector = extract_33_features(FILE_TO_TEST)
 
 
 def analyze_and_push(file_path):
-    print(f"🚀 Starting Intelligence Triage for: {os.path.basename(file_path)}")
+    print(f"Starting Intelligence Triage for: {os.path.basename(file_path)}")
     
     # 1. Generate Fingerprint
     with open(file_path, "rb") as f:
@@ -173,9 +196,55 @@ def analyze_and_push(file_path):
             files = {'image': (os.path.basename(file_path), f, 'application/octet-stream')}
             data = {'json_data': json.dumps(payload)}
             response = requests.post(url, files=files, data=data)
-            print(f"📡 Server Response: {response.text}")
+            print(f"Server Response: {response.text}")
     except Exception as e:
-        print(f"❌ Upload Failed: {e}")
+        print(f"Upload Failed: {e}")
           
+def main():
+    if len(sys.argv) < 2:
+        return
+
+    target_file = sys.argv[1]
+    
+    # 1. Extraction
+    raw_vector = extract_33_features(target_file)
+    if raw_vector is None:
+        # Send a clean error back to PHP instead of crashing
+        print(json.dumps({"success": False, "error": "PE file structure is invalid or corrupt."}))
+        return
+
+    # Now the scaler will have data to transform
+    df_input = pd.DataFrame(raw_vector, columns=feature_names)
+    
+    # 2. Prediction
+    df_input = pd.DataFrame(raw_vector, columns=feature_names)
+    scaled_df = pd.DataFrame(scaler.transform(df_input), columns=feature_names)
+    prob = float(model.predict_proba(scaled_df)[0, 1])
+
+    # Clean the features for JSON output (handle NaN and Inf)
+    # 1. Capture the features into a dictionary
+    raw_features = scaled_df.iloc[0].to_dict()
+
+    # 2. THE SANITIZATION FIX: 
+    # Iterate through the features to replace JSON-breaking values
+    clean_features = {}
+    for k, v in raw_features.items():
+        # Replace NaN or Infinity with 0.0 to prevent PHP json_decode failure
+        if pd.isna(v) or np.isinf(v):
+            clean_features[k] = 0.0
+        else:
+            clean_features[k] = float(v)
+
+    # 3. CONSTRUCT THE FINAL RESPONSE
+    response = {
+        "success": True,
+        "probability": float(prob),
+        "file": os.path.basename(target_file),
+        "features": clean_features  # Use the cleaned dictionary
+    }
+
+    # 4. SILENT OUTPUT (Only print the JSON)
+    print(json.dumps(response))
+
 if __name__ == "__main__":
-    analyze_and_push(FILE_TO_TEST)
+    main()
